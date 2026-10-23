@@ -14,10 +14,13 @@ async fn main() -> anyhow::Result<()> {
     marivect::logging();
     let db = marivect::pool().await?;
     let app = Router::new()
+        .merge(marivect::auth::routes())
+        .merge(marivect::console::routes())
         .route("/health/live", get(|| async { "ok" }))
         .route("/health/ready", get(ready))
         .route("/api/v1/ingest/push", post(push))
         .route("/api/v1/source/latest", get(latest))
+        .layer(axum::middleware::from_fn(no_store))
         .layer(DefaultBodyLimit::max(65536))
         .layer(TraceLayer::new_for_http())
         .with_state(db);
@@ -114,4 +117,16 @@ async fn latest(
     Ok(Json(
         serde_json::json!({"tenant_id":identity.tenant_id,"device_id":identity.device_id,"measurements":values}),
     ))
+}
+
+async fn no_store(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        "no-store".parse().unwrap(),
+    );
+    response
 }

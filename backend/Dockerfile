@@ -6,7 +6,7 @@ RUN cargo build --release --workspace --locked
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* && useradd --system --uid 10001 app
-COPY --from=build /app/target/release/api /app/target/release/worker /app/target/release/migrate /app/target/release/seed /usr/local/bin/
+COPY --from=build /app/target/release/api /app/target/release/worker /app/target/release/migrate /app/target/release/seed /app/target/release/bootstrap /usr/local/bin/
 USER app
 EXPOSE 8080
 CMD ["api"]

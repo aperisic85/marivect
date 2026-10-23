@@ -10,6 +10,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 pub mod adapters;
+pub mod auth;
+pub mod console;
 
 pub fn logging() {
     tracing_subscriber::fmt()
@@ -20,8 +22,15 @@ pub fn logging() {
         .init();
 }
 pub async fn pool() -> anyhow::Result<PgPool> {
+    let max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
+        .unwrap_or_else(|_| "10".into())
+        .parse()?;
+    anyhow::ensure!(
+        (1..=100).contains(&max_connections),
+        "DB_MAX_CONNECTIONS must be between 1 and 100"
+    );
     Ok(sqlx::postgres::PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(max_connections)
         .connect(&std::env::var("DATABASE_URL")?)
         .await?)
 }

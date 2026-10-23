@@ -1,37 +1,34 @@
-# Status isporuke — 23.10.2026.
+# Status isporuke 0.2 — 23.10.2026.
 
-Ovo je skeleton s implementiranom uskom normaliziranom push vertikalom. Nije potpuni MVP iz priložene specifikacije.
+Ova verzija dodaje ljudsku autentikaciju i tenant konzolu na postojeću push vertikalu. Nije još potpuni MVP iz specifikacije.
 
-## Izvršeno u radnom okruženju
+## Izvršene provjere
 
 | Provjera | Rezultat |
 | --- | --- |
-| Rust `cargo check --workspace --all-targets` | Prošlo |
-| Rust `cargo fmt --all -- --check` | Prošlo |
-| Rust `cargo clippy --locked --workspace --all-targets -- -D warnings` | Prošlo |
-| Rust `cargo test --locked --workspace` | Prošlo, 4 unit testa |
-| Frontend `npm ci --ignore-scripts` | Prošlo |
-| Frontend `npm run build` (TypeScript + Vite) | Prošlo |
-| Compose/OpenAPI YAML i package-lock JSON parsiranje | Prošlo; nije zamjena za Compose runtime validaciju |
-| Python skripte — kompilacija | Prošlo |
-| Generiranje .env i odbijanje overwritea | Prošlo u privremenoj mapi; tajne nisu uključene u isporuku |
-| Shell skripte — `sh -n` | Prošlo |
+| Rust build/check svih targeta | Prošlo |
+| Rust fmt | Prošlo |
+| Clippy sa zabranom upozorenja | Prošlo |
+| Rust unit testovi | 8 prošlo: ingest validacija, Argon2id, cookie/email i senzorska validacija |
+| Frontend TypeScript + Vite production build | Prošlo |
+| SQLx migracije 0001 i 0002 na praznoj PGlite bazi | Prošlo |
+| SQL identity izolacijski scenariji | Prošlo: bez tenant konteksta nema uređaja, tuđi uređaj nije vidljiv, memberships su ograničeni na korisnika, runtime ne čita sessions, credential insert odbija tuđi tenant, istek/opoziv sesije |
+| HTTP auth/RBAC scenariji kroz stvarni Rust API | 2 testna slučaja prošla, s više provjera: login, HttpOnly/SameSite cookie, CSRF/Origin odbijanje, A/B izolacija, viewer zabrana kreiranja, admin kreiranje uređaja, novi servisni token → push → latest, logout i replay opozvanog cookieja |
+| Installer nadogradnje | Prošlo: čuva točne bajtove stare migracije 0001 i .env te radi backup prepisanih datoteka |
+| Python sintaksa, YAML/JSON struktura | Prošlo |
 
-Rust provjere izvršene su privremeno instaliranim Rust 1.99.1 alatom. Frontend build koristi Vite 7.3.7 iz lock datoteke. Vite je prijavio neblokirajuća upozorenja o ignoriranom `use client` direktivama TanStack Query paketa.
+DB provjere ovdje koriste **PGlite 0.5.11 / PostgreSQL 18.6 u WASM-u**. HTTP testovi koristili su PGlite socket, eksplicitni `SET ROLE marivect_app`, pool s jednom konekcijom i isključeni statement cache zbog ograničenja PGlite protokola. Bootstrap/migrator prethodno su radili privilegirano. Ovo provjerava stvarni SQL i API autorizaciju, ali **ne potvrđuje ponašanje višekonekcijskog poola, konkurentnost ni Docker PostgreSQL 17 deployment**. Produkcijski runtime zadržava zadani pool od 10 konekcija i SQLx statement cache.
 
-## Nije izvršeno
+## Preostala verifikacija
 
-Docker Engine/Compose i PostgreSQL server nisu dostupni u ovom okruženju. Nisu izvršeni Docker image build, `docker compose config`, primjena migracija na praznoj bazi ni `tests/smoke.py`. Njihova uspješnost nije potvrđena. CI konfiguracija uključuje te provjere za GitHub runner; workflow ovdje nije izvršen. Izvršen `cargo check` ne validira SQL upite nad stvarnom bazom.
+Docker Engine/Compose i pravi PostgreSQL 17 server nisu dostupni u ovom okruženju. Docker build/start, Nginx rate limiting i testovi na ciljnom Compose stacku ovdje nisu pokrenuti. GitHub CI konfiguracija uključuje PostgreSQL 17 migracije, SQL testove i HTTP auth testove, ali taj workflow ovdje nije izvršen.
 
-Nema testova ni potvrde rada s fizičkom opremom. Campbell transport, ChirpStack, pull scheduler, ljudska autentikacija/RBAC, history API, alarmi, naredbe i produkcijski hardening ostaju za sljedeće faze. Detaljan plan je u README-u i punoj specifikaciji.
+Pravi browser E2E nije izvršen; frontend je verificiran TypeScriptom i buildom. Vite je prijavio neblokirajuća upozorenja o ignoriranim `use client` direktivama TanStack Queryja. Nema provjere fizičke opreme.
 
-## Početne odluke
+## Važno pri nadogradnji
 
-- Naziv projekta: Marivect, prema dogovorenom nazivu.
-- Početni transport je vlastiti JSON push, nevezan uz proizvođača.
-- Prijam i normalizacija su sinkroni u jednoj transakciji; API vraća 200 tek nakon commita.
-- Jedan servisni token odgovara jednom registriranom uređaju. Lifecycle i granularni scopeovi dolaze s upravljanjem izvorima.
-- Zaštita latest vrijednosti koristi strogo novije vrijeme; pri jednakom vremenu pobjeđuje prvi spremljeni zapis. Više izvora po senzoru i push/pull deduplikacija još nisu implementirani.
-- Brojčana mjerenja prva su vertikala. Boolean i tekst slijede u zasebnoj migraciji.
-- Worker je stvarni zaseban proces s heartbeatom, bez lažnih poslova i rezultata.
-- Nema hardkodiranih demo lozinki/tokena. `.env` generira slučajne vrijednosti na korisnikovu računalu.
+`install-upgrade.py` čuva korisnikovu primijenjenu datoteku 0001 jer je ručno ispravljena tijekom pokretanja prve verzije. Ne usklađuje checksumove preko baze i ne briše SQLx povijest. Dodaje se samo nova migracija 0002. Sigurnosna kopija izmijenjenih ostalih datoteka ostaje lokalno u `.marivect-backups`.
+
+## Još nije implementirano
+
+Web administracija korisnika/članstava, samostalno kreiranje novih organizacija, lokacije, edit/delete uređaja i senzora, lifecycle servisnih tokena, audit, history/grafovi, puni ingest queue, boolean/text mjerenja, retencija, Campbell pull, ChirpStack, alarmi i naredbe. Vanjski transporti ostaju označeni kao neimplementirani. Worker je i dalje heartbeat proces.

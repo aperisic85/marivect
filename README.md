@@ -1,102 +1,103 @@
-# Marivect — skeleton 0.1
+# Marivect — razvojna verzija 0.2
 
-Multitenant platforma za nadzor udaljene opreme. Rust/Axum/Tokio + SQLx/PostgreSQL 17 + React/TypeScript/Vite. Docker i Docker Compose obvezni su dio ovog projekta.
+Multitenant nadzor udaljene opreme: Rust/Axum/Tokio + SQLx/PostgreSQL 17 + React/TypeScript/Vite. Docker i Docker Compose dio su osnovnog načina rada.
 
-Ovo je **razvojni skeleton s uskom funkcionalnom push vertikalom**, a ne gotov MVP iz pune specifikacije. Nema korisničkog logina niti administracije. Konzola koristi servisni token samo za njegov registrirani uređaj. Ne izlagati ovaj razvojni stack javno.
+**Postojeća instalacija 0.1:** prati [docs/UPGRADE_0.2.md](docs/UPGRADE_0.2.md). Nadogradnja čuva `.env`, prvu primijenjenu migraciju i postojeće podatke. Ne briši bazu.
 
-## Pokretanje
+## Nova instalacija
 
-Preduvjeti: Docker Engine/Desktop s Compose v2 i Python 3. Node i Rust na računalu nisu potrebni.
+Preduvjeti: Docker Engine/Desktop s Compose v2 i Python 3. Lokalni Rust i Node nisu potrebni.
 
 ```sh
 python3 scripts/init-env.py
-docker compose up --build -d
-docker compose --profile tools run --rm seed
+docker compose build api frontend
+docker compose up -d --pull never
+docker compose --profile tools run --rm --pull never seed
+python3 scripts/create-user.py --email tvoj@email.hr
 ```
 
-Na Linuxu/macOS-u sve tri naredbe možeš pokrenuti i s `sh scripts/dev-up.sh`.
-
-Otvori **http://localhost:8080**. Token `DEMO_TOKEN_A` ili `DEMO_TOKEN_B` iz generirane `.env` datoteke unesi u razvojnu konzolu. Podataka nema dok ne pošalješ mjerenje. Za demonstracijski unos:
+Otvori **http://localhost:8080** i prijavi se lozinkom koju si postavio. Seed stvara dvije demo organizacije i uređaje, bez lažnih mjerenja. `create-user.py` stvara korisnika/admina organizacije A, a može dodati članstvo i u drugoj organizaciji. Detalji su u uputama za nadogradnju.
 
 ```sh
-# Lokalno generirana .env sadrži samo sigurne hex vrijednosti i broj porta.
-set -a
-. ./.env
-set +a
-SOURCE_TOKEN="$DEMO_TOKEN_A" python3 scripts/simulate-push.py
+python3 scripts/simulate-push.py --source A
+python3 scripts/simulate-push.py --source B --value 13.1
 ```
 
-PowerShell: postavi `$env:SOURCE_TOKEN` na vrijednost `DEMO_TOKEN_A`, zatim `python scripts/simulate-push.py`.
+Za ove naredbe ne trebaju `sudo`, `source .env` ni korisnički login. Servisni token je zaseban identitet uređaja. Simulator s `--source` čita demo token iz lokalne `.env`; za ručno dodan uređaj koristi `SOURCE_TOKEN` varijablu.
 
-Pregled logova i zaustavljanje:
+## Implementirano
+
+- Compose servisi: PostgreSQL, jednokratni migrator, API, worker, Nginx/frontend; tools profili za seed, korisnički bootstrap i Rust provjere.
+- Servisni image gradi se lokalno. `pull_policy: never` uklanja pokušaj njegova preuzimanja s Docker Huba. Vanjske bazne slike i dalje se preuzimaju tijekom builda.
+- Runtime DB uloga nije superuser, vlasnik tablica ni BYPASSRLS. Tenant podaci imaju FORCE RLS i kompozitne strane ključeve; tenant kontekst je transakcijski.
+- Argon2id lozinke, server-side sesije od 12 sati, hashirani session tokeni, HttpOnly/SameSite=Strict cookie i CSRF/Origin provjera mutacija. Tokeni se ne spremaju u localStorage.
+- Login limit na Nginxu (5/min uz burst 10 po IP-u) i najviše 4 istodobne provjere lozinki u API-ju.
+- Lokalni provisioning korisnika i članstava s ulogama `tenant_admin`, `operator`, `viewer`. Nema javne registracije niti hardkodirane administratorske lozinke.
+- Web login/logout, odabir organizacije, popis uređaja i latest mjerenja. Promjena tenanta uklanja prethodne tenant queryje i resetira detalj/obrazac.
+- Administrator može dodati uređaj, do 128 brojčanih senzora i servisni token prikazan jednom. Viewer i operator imaju samo pregled u ovoj fazi. API provjerava prava neovisno o UI-ju.
+- Normalizirani push, validacija ključeva i jedinica, trajni događaji/mjerenja, deduplikacija po tenant/uređaj/message_id i konflikt 409 za drugačiji payload istog ID-a.
+- Stariji ili jednako star zapis ne mijenja noviji latest. Povijesni zapisi ostaju u bazi, ali history API i grafovi još nisu dodani.
+- Latest osvježavanje svakih 15 s; nepostojeće mjerenje je null, ne nula. Razvojni prag zastarjelosti 5 min nije komunikacijski online/offline status.
+- Adapter ugovor i worker heartbeat; nema lažnog dohvata ni naredbi.
+
+## Struktura
+
+- `backend/src/auth.rs`: sesije, lozinke, CSRF i članstva.
+- `backend/src/console.rs`: autorizirani pregled i kreiranje uređaja.
+- `backend/src/bin/`: API, worker, migrator, demo seed i lokalni bootstrap.
+- `backend/migrations/`: nepromjenjivi SQL koraci; nova funkcionalnost ide u nove migracije.
+- `frontend/src/`: React konzola na hrvatskom.
+- `scripts/`: priprema okruženja, nadogradnja, korisnici i simulator.
+- `tests/`: unit testovi u Rustu, SQL izolacijski scenariji i HTTP testovi.
+- `docs/`: puna specifikacija, OpenAPI, upgrade i status provjera.
+
+## Provjere
+
+Uz pokrenut i seedan stack:
+
+```sh
+docker compose config --quiet
+docker compose --profile tools run --build --rm checks
+python3 tests/smoke.py
+docker compose exec -T db psql -U marivect_migrator -d marivect -v ON_ERROR_STOP=1 < tests/identity.sql
+python3 tests/auth_smoke.py
+```
+
+`auth_smoke.py` kreira zasebne nasumične testne korisnike i testni uređaj, provjerava login, cookie, CSRF, RBAC, tenant izolaciju, push i logout. Koristi isključivo razvojnu/testnu bazu. SQL test rollbacka fixtureove. GitHub CI uključuje oba skupa testova.
+
+Frontend provjera: `docker compose build frontend` radi `npm ci`, TypeScript i Vite build. Rust checks rade fmt, Clippy i unit testove. Frontend lint i pravi browser E2E nisu dio osnovnog CI-ja. Izvršene provjere i ograničenja su u `docs/STATUS.md`.
+
+## Sigurnost i operacije
+
+Sustav je još razvojna verzija. Compose izlaže samo Nginx na `127.0.0.1:<HTTP_PORT>`; baza i API nemaju host port. Lokalni HTTP cookie ima `COOKIE_SECURE=false` u Composeu. Kod API-ja zadana vrijednost je Secure=true ako varijabla nije eksplicitno false. Produkcija zahtijeva TLS i točan `APP_ORIGIN`. Iza drugog reverse proxyja pravilno definirati login rate limiting; ne vjerovati proizvoljnom klijentskom IP headeru.
+
+Globalne identity tablice nemaju runtime table grant. Uske SECURITY DEFINER funkcije omogućuju samo potrebne operacije. Memberships imaju posebnu auth RLS SELECT politiku radi razrješavanja članstava prije odabira tenanta. Credentials imaju auth SELECT lookup i INSERT politiku koja zahtijeva odgovarajući tenant kontekst. Runtime ne čita hashove servisnih tokena izravno.
+
+Lokalni migrator/bootstrap koristi privilegiranu inicijalnu DB ulogu; produkcija treba odvojeni provisioning i kontrolirano izvođenje migracija. `bootstrap` prima lozinku na stdin. `.env` se ne commita. Generirane lozinke za bazu vrijede pri inicijalizaciji volumea; promjena `.env` ne rotira postojeće DB lozinke. `seed` namjerno rotira demo tokene prema `.env` i ostaje development-only.
+
+Sesije se mogu opozvati logoutom; deaktivacija korisnika ili promjena članstva djeluje pri sljedećem API zahtjevu. Sesije nemaju sliding expiry. Reset lozinke, web upravljanje članstvima, cleanup isteklih sesija, audit, retencija i lifecycle servisnih tokena još nisu implementirani. Ako se odgovor za kreiranje uređaja izgubi nakon commita ili se izgubi prikazani token, UI ga ne može ponovno prikazati; samostalni siguran tok rotacije slijedi u idućoj fazi.
+
+Ingest je sinkron i vraća 200 tek nakon uspješne transakcije, a ne asinkroni 202. Payload je ograničen na 64 KiB / 128 mjerenja. Nije implementiran puni ingest rate limiting. Neispravan JSON koristi standardni Axum rejection; vlastite greške imaju code i request_id. Postojeći source/latest endpoint ostaje radi razvojne kompatibilnosti i dopušta pristup samo uređaju vezanom uz servisni token.
 
 ```sh
 docker compose logs -f api worker
 docker compose down
 ```
 
-Podaci ostaju u named volumeu `pgdata`. `docker compose down -v` trajno briše razvojnu bazu. Postgres lozinke i inicijalne uloge postavljaju se samo pri prvom stvaranju baze; promjena `.env` sama ne rotira postojeće DB lozinke. `seed` ponovno izvođenje rotira demo tokene na vrijednosti iz `.env`.
+Named volume `pgdata` ostaje nakon `down`. **`down -v` briše bazu.** Backup/restore i test oporavka treba dodati prije produkcije.
 
-## Što je implementirano
+## Nastavak
 
-- Compose: PostgreSQL, jednokratna migracija, API, zaseban worker i Nginx frontend; dodatni tools profili za seed/provjere.
-- Baza i API nemaju host portove. Nginx služi frontend i proxy za API na istom originu, vezan na localhost.
-- Runtime uloga nije vlasnik tablica, superuser niti BYPASSRLS. Tenant kontekst postavlja se samo unutar transakcije.
-- Dva demonstracijska tenanta s po jednim uređajem i `battery_voltage` senzorom.
-- Hashirani servisni tokeni određuju tenant i uređaj. Tijelo zahtjeva ne bira tenant.
-- Normalizirani push, provjera registriranog senzora/jedinice, trajni događaj i brojčana mjerenja u jednoj transakciji. HTTP 200 znači **obrađeno i commitano**; ovo nije asinkroni 202 ingest.
-- Idempotentnost po tenant/uređaj/message_id. Isti ID s promijenjenim sadržajem daje 409. Zakašnjeli zapis ne zamjenjuje novije latest stanje. Kod jednakog vremena zadržava se prvi zapis.
-- Pregled latest vrijednosti, stanje greške/praznih podataka i osvježavanje svakih 15 s. Token ostaje samo u memoriji; cache se čisti kod promjene izvora.
-- Adapter ugovor i zaseban worker s DB heartbeatom. Worker još ne izvršava poslove.
+1. Tenant siguran CRUD lokacija i proširena administracija uređaja/senzora; sigurna rotacija i opoziv servisnih tokena, audit.
+2. History API i grafovi; tekst/logičke vrijednosti, retencija i asinkroni ingest sa statusima.
+3. Trajni scheduler i pull simulator; potvrđeni Campbell HTTP adapter tek nakon poznatog modela/firmwarea, formata i sigurnih mrežnih profila.
+4. Potvrđena ChirpStack verzija, webhook fixture, decoder/mapping i DevEUI/application allowlist.
+5. Alarmi, karta s atribucijom, obavijesti i provjerene capability naredbe.
 
-## Struktura
+Nijedan fizički Campbell model, PakBus, ChirpStack webhook ili downlink nije verificiran niti implementiran. Simulator koristi vlastiti JSON ugovor.
 
-```text
-backend/src/bin/     api, worker, migrate, seed
-backend/src/         zajednička validacija, tenant transakcije, adapter ugovor
-backend/migrations/  SQL migracije
-frontend/src/        React razvojna konzola
-infra/postgres/      inicijalna runtime DB uloga
-scripts/             generiranje .env i push simulator
-tests/               integracijske provjere stvarnog stacka
-docs/                puna specifikacija, API ugovor, status i plan
-compose.yaml         lokalni sustav
-```
+## Ovisnosti
 
-## Provjere
+Axum 0.8, Tokio 1, SQLx 0.8, Argon2 0.5.3, React 19, Vite 7 i TypeScript 5.9. Docker frontend koristi Node 22. Cargo/npm lock datoteke su uključene; Rust build koristi `--locked`. Docker slike još nisu digest-pinane.
 
-```sh
-docker compose config --quiet
-docker compose --profile tools run --build --rm checks
-python3 tests/smoke.py
-```
-
-`checks` radi Rust fmt, Clippy i unit testove. Smoke test prethodno zahtijeva pokrenut stack i seed; upisuje testna mjerenja u demo tenant A. Provjerava duplikate, konflikt ID-a, zakašnjelo mjerenje, vjerodajnice, odbijanje tenant polja i RLS reset na istoj konekciji. Nije potpuni test poola, RBAC-a ni budućih endpointa.
-
-Frontend provjera bez lokalnih alata: `docker compose build frontend` pokreće `npm ci` i TypeScript/build. Frontend nema zaseban lint alat u ovoj verziji.
-
-## Sigurnosne granice
-
-Migrator u lokalnom Composeu jest privilegirana bootstrap uloga potrebna za kreiranje auth uloge; API i worker dobivaju samo ograničenu runtime vjerodajnicu. Produkcija treba zaseban kontrolirani provisioning i ograničenog vlasnika migracija. Tablice tenant podataka koriste FORCE RLS i kompozitne strane ključeve. Credentials tablica ima posebnu RLS SELECT politiku samo za NOLOGIN auth ulogu radi pronalaska izvora prije tenant konteksta. `tenants` i `source_credentials` nemaju runtime table grant; uska SECURITY DEFINER funkcija provjerava hash bez izlaganja hashova. Njezina NOLOGIN uloga ima samo SELECT nad credentials. Ne vraćaju se proizvoljni tenant podaci.
-
-Ograničenje zahtjeva je 64 KiB / 128 mjerenja. Nisu implementirani rate limiting, korisničke sesije, CSRF, lifecycle tokena, audit ni produkcijski TLS. Token konzola služi provjeri ove vertikale, a ne zamjeni za RBAC. Nepoznat senzor/jedinica odbija cijeli zahtjev. Neispravan JSON vraća standardni Axum rejection (nije još usklađen s vlastitim error envelopeom).
-
-## Sljedeći koraci
-
-1. Korisnici, Argon2id login, server-side sesije, CSRF, članstva i RBAC; tenant siguran CRUD lokacija/uređaja/senzora.
-2. Trajni ingest queue sa statusima i reprocessingom; typed boolean/text mjerenja, history API i retencija.
-3. Pull scheduler s leaseom, retryjem i cursorom u PostgreSQL-u; simulator kvarova i restartova.
-4. Campbell HTTP adapter nakon potvrde modela, firmwarea, protokola i stvarnog odgovora; SSRF profili i šifrirane tajne.
-5. ChirpStack webhook nakon potvrde verzije i encodinga, stvarni fixture i DevEUI/application allowlist. MQTT kasnije.
-6. Alarmi, grafovi, karta s atribucijom, audit i administracija; capability kontrolirane naredbe tek uz potvrđen transport.
-7. Produkcijski TLS, rate limiting, rotacija tajni, backup/restore, retencija i CI izolacijski/E2E testovi.
-
-Nijedan fizički Campbell model, PakBus, ChirpStack webhook ili downlink nije verificiran niti implementiran. Simulator šalje vlastiti dokumentirani normalizirani JSON. Ne dodavati izmišljene URL-ove ni prazne uspješne stubove.
-
-## Ovisnosti i reproducibilnost
-
-Odabrane kompatibilne linije: Axum 0.8, Tokio 1, SQLx 0.8, React 19, Vite 7, TypeScript 5.9; frontend container koristi Node 22. Dokumentacija konzultirana: https://docs.rs/axum/latest/axum/serve/fn.serve.html , https://docs.rs/sqlx/latest/sqlx/macro.migrate.html i https://vite.dev/guide/ .
-
-`package-lock.json` i `Cargo.lock` zaključavaju ovisnosti; Rust Docker build koristi `--locked`. Docker image tagovi nisu digest-pinani; prije produkcije pinati provjerene digestove i definirati proces ažuriranja.
-
-Status stvarno izvršenih provjera pri isporuci nalazi se u `docs/STATUS.md`.
+Službene reference: https://docs.rs/argon2/0.5.3/argon2/ , https://docs.rs/axum/latest/ , https://www.postgresql.org/docs/17/ddl-rowsecurity.html , https://vite.dev/guide/ .

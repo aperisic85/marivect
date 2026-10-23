@@ -1,7 +1,7 @@
 name: marivect
 x-backend: &backend
   image: marivect-backend:local
-  pull_policy: build
+  pull_policy: never
   build:
     context: .
     dockerfile: backend/Dockerfile
@@ -10,6 +10,8 @@ x-backend: &backend
   environment: &runtime-env
     DATABASE_URL: postgresql://marivect_app:${APP_DB_PASSWORD:?Run scripts/init-env.py}@db:5432/marivect
     RUST_LOG: marivect=info,tower_http=info
+    APP_ORIGIN: http://localhost:${HTTP_PORT:-8080}
+    COOKIE_SECURE: "false"
   networks: [internal]
 
 services:
@@ -69,6 +71,15 @@ services:
       APP_ENV: development
       DEMO_TOKEN_A: ${DEMO_TOKEN_A:-}
       DEMO_TOKEN_B: ${DEMO_TOKEN_B:-}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  bootstrap:
+    <<: *backend
+    profiles: [tools]
+    command: [bootstrap]
+    stdin_open: true
+    environment:
+      DATABASE_URL: postgresql://marivect_migrator:${POSTGRES_PASSWORD}@db:5432/marivect
     depends_on:
       migrate: {condition: service_completed_successfully}
   checks:

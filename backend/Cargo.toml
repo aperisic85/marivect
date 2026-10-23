@@ -1,9 +1,10 @@
 [package]
 name = "marivect"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
+argon2 = "0.5.3"
 anyhow = "1"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
