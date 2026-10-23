@@ -56,8 +56,16 @@ DO $$ DECLARE tab text; BEGIN
  FOREACH tab IN ARRAY ARRAY['devices','sensors','ingestion_events','measurements','device_latest_values'] LOOP
   EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',tab);
   EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',tab);
-  EXECUTE format('CREATE POLICY tenant_isolation ON %I USING (tenant_id = nullif(current_setting(''app.tenant_id'',true),)::uuid) WITH CHECK (tenant_id = nullif(current_setting(app.tenant_id,true),)::uuid)',tab);
- END LOOP;
+  EXECUTE format($policy$
+    CREATE POLICY tenant_isolation ON %I
+    USING (
+      tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid
+    )
+    WITH CHECK (
+      tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid
+    )
+  $policy$, tab);
+  END LOOP;
 END $$;
 GRANT USAGE ON SCHEMA public TO marivect_app;
 GRANT SELECT ON devices,sensors,ingestion_events,measurements,device_latest_values TO marivect_app;
