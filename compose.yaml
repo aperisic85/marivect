@@ -1,6 +1,7 @@
 name: marivect
 x-backend: &backend
   image: marivect-backend:local
+  pull_policy: build
   build:
     context: .
     dockerfile: backend/Dockerfile
