@@ -1,0 +1,97 @@
+openapi: 3.0.3
+info:
+  title: Marivect skeleton API
+  version: 0.1.0
+servers:
+  - url: /
+paths:
+  /health/live:
+    get:
+      responses:
+        '200': {description: Process alive; plain text ok}
+  /health/ready:
+    get:
+      responses:
+        '200': {description: DB and foundation table accessible}
+        '503': {description: Dependency unavailable}
+  /api/v1/ingest/push:
+    post:
+      security: [{sourceToken: []}]
+      description: Synchronous atomic processing. Source/tenant bound to credential. 64 KiB body limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PushEvent'}
+      responses:
+        '200':
+          description: Committed event or identical duplicate
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event_id, status, duplicate]
+                properties:
+                  event_id: {type: string, format: uuid}
+                  status: {type: string, enum: [processed]}
+                  duplicate: {type: boolean}
+        '400': {description: Invalid JSON}
+        '401': {description: Missing or invalid source credential}
+        '409': {description: Message ID reused with a different payload}
+        '413': {description: Body too large}
+        '415': {description: Content type must be application/json}
+        '422': {description: Invalid schema, time, key, unit or value}
+        '500': {description: Internal error; retry with same message ID and payload}
+  /api/v1/source/latest:
+    get:
+      security: [{sourceToken: []}]
+      description: Latest numeric values for the one source bound to the credential; maximum 128.
+      responses:
+        '200':
+          description: Latest values, possibly empty
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenant_id, device_id, measurements]
+                properties:
+                  tenant_id: {type: string, format: uuid}
+                  device_id: {type: string, format: uuid}
+                  measurements:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, unit, value, observed_at, received_at, quality]
+                      properties:
+                        key: {type: string}
+                        unit: {type: string}
+                        value: {type: number, format: double}
+                        observed_at: {type: string, format: date-time}
+                        received_at: {type: string, format: date-time}
+                        quality: {type: string, enum: [unknown]}
+        '401': {description: Missing or invalid source credential}
+        '500': {description: Internal error}
+components:
+  securitySchemes:
+    sourceToken: {type: http, scheme: bearer}
+  schemas:
+    PushEvent:
+      type: object
+      additionalProperties: false
+      required: [schema_version, message_id, observed_at, measurements]
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        message_id: {type: string, minLength: 1, maxLength: 128}
+        observed_at: {type: string, format: date-time, description: At most 5 minutes in future and 366 days in past}
+        measurements:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, value, unit]
+            properties:
+              key: {type: string, minLength: 1, maxLength: 64}
+              value: {type: number, format: double}
+              unit: {type: string, maxLength: 32}

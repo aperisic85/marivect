@@ -1,0 +1,90 @@
+name: marivect
+x-backend: &backend
+  image: marivect-backend:local
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+    target: runtime
+  init: true
+  environment: &runtime-env
+    DATABASE_URL: postgresql://marivect_app:${APP_DB_PASSWORD:?Run scripts/init-env.py}@db:5432/marivect
+    RUST_LOG: marivect=info,tower_http=info
+  networks: [internal]
+
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: marivect_migrator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/init-env.py}
+      POSTGRES_DB: marivect
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run scripts/init-env.py}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U marivect_migrator -d marivect']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [internal]
+    restart: unless-stopped
+  migrate:
+    <<: *backend
+    command: [migrate]
+    environment:
+      DATABASE_URL: postgresql://marivect_migrator:${POSTGRES_PASSWORD}@db:5432/marivect
+    depends_on:
+      db: {condition: service_healthy}
+  api:
+    <<: *backend
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/health/ready]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  worker:
+    <<: *backend
+    command: [worker]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    ports: ['127.0.0.1:${HTTP_PORT:-8080}:8080']
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [internal, web]
+    restart: unless-stopped
+  seed:
+    <<: *backend
+    profiles: [tools]
+    command: [seed]
+    environment:
+      DATABASE_URL: postgresql://marivect_migrator:${POSTGRES_PASSWORD}@db:5432/marivect
+      APP_ENV: development
+      DEMO_TOKEN_A: ${DEMO_TOKEN_A:-}
+      DEMO_TOKEN_B: ${DEMO_TOKEN_B:-}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  checks:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: checks
+    profiles: [tools]
+    networks: [internal]
+    environment:
+      DATABASE_URL: postgresql://marivect_app:${APP_DB_PASSWORD}@db:5432/marivect
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  pgdata:
+networks:
+  internal:
+    internal: true
+  web:
